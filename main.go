@@ -11,6 +11,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	echojwt "github.com/labstack/echo-jwt/v4"
 	"github.com/labstack/echo/v4"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -30,6 +31,7 @@ func main() {
 	e := echo.New()
 	// routing
 	e.POST("/login", loginHandler.Login)
+	e.GET("/generate-password/:password", loginHandler.GeneratePassword)
 
 	// routing auth
 	admin := e.Group("/admin")
@@ -111,8 +113,12 @@ func (h *LoginHandler) Login(ctx echo.Context) error {
 
 	user := new(User)
 
-	if err := h.db.Where("nim = ? and password = ?", input.Nim, input.Password).First(&user).Error; err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]string{"message": "Incorrect Nim or Password"})
+	if err := h.db.Where("nim = ?", input.Nim).First(&user).Error; err != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]string{"message": "Incorrect Credentials"})
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password)); err != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]string{"message": "Incorrect Credentials"})
 	}
 
 	// Set custom claims
@@ -138,6 +144,23 @@ func (h *LoginHandler) Login(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]interface{}{"message": "Succesfully Login", "token": generatedToken})
 }
 
+func (h *LoginHandler) GeneratePassword(ctx echo.Context) error {
+	var input struct {
+		Password string `param:"password" json:"password"`
+	}
+	if err := ctx.Bind(&input); err != nil {
+		return ctx.JSON(http.StatusBadRequest, map[string]string{"message": "Failed to Bind Input"})
+	}
+
+	password, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+
+	if err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]string{"message": "Failed to Generate Password"})
+	}
+
+	return ctx.JSON(http.StatusOK, map[string]interface{}{"message": "Succesfully Generate Password", "password": string(password)})
+}
+
 func (h *UserHandler) GetAllUsers(ctx echo.Context) error {
 	search := ctx.QueryParam("search")
 	users := make([]*User, 0)
@@ -157,11 +180,19 @@ func (h *UserHandler) CreateUser(ctx echo.Context) error {
 		return ctx.JSON(http.StatusBadRequest, map[string]string{"message": "Failed to Bind Input"})
 	}
 
+	password := input.Password
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+
+	if err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]string{"message": "Failed to Generate Password"})
+	}
+
 	user := &User{
 		Nim:      input.Nim,
 		Nama:     input.Nama,
 		Alamat:   input.Alamat,
-		Password: input.Password,
+		Password: string(hashedPassword),
 	}
 
 	if err := h.db.Create(user).Error; err != nil { // INSERT INTO users (nim, nama, alamat) VALUES('')
@@ -194,12 +225,20 @@ func (h *UserHandler) UpdateUser(ctx echo.Context) error {
 
 	userID, _ := strconv.Atoi(input.ID)
 
+	password := input.Password
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+
+	if err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]string{"message": "Failed to Generate Password"})
+	}
+
 	user := User{
 		ID:       int64(userID),
 		Nim:      input.Nim,
 		Nama:     input.Nama,
 		Alamat:   input.Alamat,
-		Password: input.Password,
+		Password: string(hashedPassword),
 	}
 
 	query := h.db.Model(&User{}).Where("id = ?", userID)
