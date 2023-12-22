@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -8,7 +9,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/caarlos0/env/v6"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/joho/godotenv"
 	echojwt "github.com/labstack/echo-jwt/v4"
 	"github.com/labstack/echo/v4"
 	"golang.org/x/crypto/bcrypt"
@@ -18,8 +21,14 @@ import (
 )
 
 func main() {
+	// initialisasi file config
+	cfg, err := initConfig(".env")
+	if err != nil {
+		panic(err)
+	}
+
 	// initialisasi database
-	db, err := initDB()
+	db, err := initDB(cfg)
 	if err != nil {
 		panic(err)
 	}
@@ -49,7 +58,42 @@ func main() {
 	admin.POST("/users", userHandler.CreateUser)
 	admin.PUT("/users/:id", userHandler.UpdateUser)
 	admin.DELETE("/users/:id", userHandler.DeleteUser)
-	e.Logger.Fatal(e.Start(":1323"))
+	e.Logger.Fatal(e.Start(fmt.Sprintf(":%s", cfg.Port)))
+}
+
+type Config struct {
+	Port        string      `env:"PORT"`
+	MysqlConfig MysqlConfig `envPrefix:"MYSQL_"`
+}
+
+type MysqlConfig struct {
+	Host     string `env:"HOST"`
+	Port     string `env:"PORT"`
+	Username string `env:"USERNAME"`
+	Password string `env:"PASSWORD"`
+	Database string `env:"DATABASE"`
+}
+
+func initConfig(envPath string) (*Config, error) {
+	cfg, err := parseConfig(envPath)
+	if err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func parseConfig(envPath string) (*Config, error) {
+	err := godotenv.Load(envPath)
+	if err != nil {
+		return nil, errors.New("failed to load env")
+	}
+
+	cfg := &Config{}
+	err = env.Parse(cfg)
+	if err != nil {
+		return nil, errors.New("failed to parse config")
+	}
+	return cfg, nil
 }
 
 // table / entity user
@@ -261,8 +305,16 @@ func (h *UserHandler) DeleteUser(ctx echo.Context) error {
 	return ctx.JSON(http.StatusNoContent, nil)
 }
 
-func initDB() (*gorm.DB, error) {
-	dsn := "root:@tcp(127.0.0.1:3306)/db_user?charset=utf8mb4&parseTime=True&loc=Local"
+func initDB(cfg *Config) (*gorm.DB, error) {
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		cfg.MysqlConfig.Username,
+		cfg.MysqlConfig.Password,
+		cfg.MysqlConfig.Host,
+		cfg.MysqlConfig.Port,
+		cfg.MysqlConfig.Database,
+	)
+	fmt.Println(dsn)
+
 	newLogger := logger.New(
 		log.New(os.Stdout, "\r\n", log.LstdFlags), // io writer
 		logger.Config{
